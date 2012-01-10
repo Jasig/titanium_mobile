@@ -126,16 +126,22 @@
 	[(TiViewProxy *)[self proxy] layoutChildren:NO];
 }
 
+-(void)frameSizeChanged:(CGRect)frame bounds:(CGRect)visibleBounds
+{
+	//Treat this as a size change
+	[(TiViewProxy *)[self proxy] willChangeSize];
+}
+
 -(void)setContentWidth_:(id)value
 {
 	contentWidth = [TiUtils dimensionValue:value];
-	[self setNeedsHandleContentSize];
+	[self performSelector:@selector(setNeedsHandleContentSize) withObject:nil afterDelay:.1];
 }
 
 -(void)setContentHeight_:(id)value
 {
 	contentHeight = [TiUtils dimensionValue:value];
-	[self setNeedsHandleContentSize];
+	[self performSelector:@selector(setNeedsHandleContentSize) withObject:nil afterDelay:.1];
 }
 
 -(void)setShowHorizontalScrollIndicator_:(id)value
@@ -249,8 +255,10 @@
 
 -(void)scrollToShowView:(TiUIView *)firstResponderView withKeyboardHeight:(CGFloat)keyboardTop
 {
-	CGRect responderRect = [wrapperView convertRect:[firstResponderView bounds] fromView:firstResponderView];
-	OffsetScrollViewForRect(scrollView,keyboardTop,minimumContentHeight,responderRect);
+    if ([scrollView isScrollEnabled]) {
+        CGRect responderRect = [wrapperView convertRect:[firstResponderView bounds] fromView:firstResponderView];
+        OffsetScrollViewForRect(scrollView,keyboardTop,minimumContentHeight,responderRect);
+    }
 }
 
 -(void)keyboardDidShowAtHeight:(CGFloat)keyboardTop forView:(TiUIView *)firstResponderView

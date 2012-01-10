@@ -220,4 +220,6 @@ typedef enum {
 +(NSString*)convertToHex:(unsigned char*)result length:(size_t)length;
 
 +(NSString*)uniqueIdentifier;
+
++(NSString*)getResponseHeader:(NSString*)header fromHeaders:(NSDictionary*)responseHeaders;
 @end

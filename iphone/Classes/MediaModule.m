@@ -47,6 +47,7 @@ static NSDictionary* TI_itemProperties;
 static NSDictionary* TI_filterableItemProperties;
 
 @implementation MediaModule
+@synthesize popoverView;
 
 #pragma mark Internal
 
@@ -113,6 +114,7 @@ static NSDictionary* TI_filterableItemProperties;
 	[self destroyPicker];
 	RELEASE_TO_NIL(systemMusicPlayer);
 	RELEASE_TO_NIL(appMusicPlayer);
+	RELEASE_TO_NIL(popoverView);
 	[super dealloc];
 }
 
@@ -195,7 +197,7 @@ static NSDictionary* TI_filterableItemProperties;
 	TiApp * tiApp = [TiApp app];
 	if ([TiUtils isIPad]==NO)
 	{
-		[[tiApp controller] manuallyRotateToOrientation:UIInterfaceOrientationPortrait];
+		[[tiApp controller] manuallyRotateToOrientation:UIInterfaceOrientationPortrait duration:[[tiApp controller] suggestedRotationDuration]];
 	}
 	[tiApp showModalController:picker_ animated:animatedPicker];
 }
@@ -205,7 +207,7 @@ static NSDictionary* TI_filterableItemProperties;
 	TiApp * tiApp = [TiApp app];
 	if ([TiUtils isIPad]==NO)
 	{
-		[[tiApp controller] manuallyRotateToOrientation:UIInterfaceOrientationPortrait];
+		[[tiApp controller] manuallyRotateToOrientation:UIInterfaceOrientationPortrait duration:[[tiApp controller] suggestedRotationDuration]];
 		[tiApp showModalController:picker_ animated:animatedPicker];
 	}
 	else
@@ -228,10 +230,62 @@ static NSDictionary* TI_filterableItemProperties;
 			poFrame.size.height = 50;
 		}
 
+		//FROM APPLE DOCS
+		//If you presented the popover from a target rectangle in a view, the popover controller does not attempt to reposition the popover. 
+		//In thosecases, you must manually hide the popover or present it again from an appropriate new position.
+		//We will register for interface change notification for this purpose
+		
+		//This registration tells us when the rotation begins.
+		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(manageRotation:) name:UIApplicationWillChangeStatusBarOrientationNotification object:nil];
+		
+		//This registration lets us sync with the TiRootViewController's orientation notification (didOrientNotify method)
+		//No need to begin generating these events since the TiRootViewController already does that
+		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updatePopover:) name:UIDeviceOrientationDidChangeNotification object:nil];
+		arrowDirection = arrow;
+		popoverView = poView;
 		popover = [[UIPopoverController alloc] initWithContentViewController:picker_];
 		[popover setDelegate:self];
 		[popover presentPopoverFromRect:poFrame inView:poView permittedArrowDirections:arrow animated:animatedPicker];
 	}
+}
+
+-(void)manageRotation:(NSNotification *)notification
+{
+	//Capture the old orientation
+	oldOrientation = [[UIApplication sharedApplication]statusBarOrientation];
+	//Capture the new orientation
+	newOrientation = [[notification.userInfo valueForKey:UIApplicationStatusBarOrientationUserInfoKey] integerValue];
+}
+-(void)updatePopover:(NSNotification *)notification
+{
+	if (isPresenting) {
+		return;
+	}
+	//Set up the right delay
+	NSTimeInterval delay = [[UIApplication sharedApplication] statusBarOrientationAnimationDuration];
+	if ( (oldOrientation == UIInterfaceOrientationPortrait) && (newOrientation == UIInterfaceOrientationPortraitUpsideDown) ){	
+		delay*=2.0;
+	}
+	else if ( (oldOrientation == UIInterfaceOrientationLandscapeLeft) && (newOrientation == UIInterfaceOrientationLandscapeRight) ){
+		delay *=2.0;
+	}
+	
+	//Allow the root view controller to relayout all child view controllers so that we get the correct frame size when we re-present
+	[self performSelector:@selector(updatePopoverNow) withObject:nil afterDelay:delay inModes:[NSArray arrayWithObject:NSRunLoopCommonModes]];
+}
+
+-(void)updatePopoverNow
+{
+	isPresenting = YES;
+	if (popover) {
+		//GO AHEAD AND RE-PRESENT THE POPOVER NOW 
+		CGRect popOverRect = [popoverView bounds];
+		if (popoverView == [[TiApp app] controller].view) {
+			popOverRect.size.height = 50;
+		}
+		[popover presentPopoverFromRect:popOverRect inView:popoverView permittedArrowDirections:arrowDirection animated:NO];
+	}
+	isPresenting = NO;
 }
 
 -(void)closeModalPicker:(UIViewController*)picker_
@@ -255,6 +309,9 @@ static NSDictionary* TI_filterableItemProperties;
 	
 	RELEASE_TO_NIL(popover);
 	[self destroyPicker];
+	//Unregister for interface change notification 
+	[[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationWillChangeStatusBarOrientationNotification object:nil];
+	[[NSNotificationCenter defaultCenter] removeObserver:self name:UIDeviceOrientationDidChangeNotification object:nil];
 }
 
 -(void)showPicker:(NSDictionary*)args isCamera:(BOOL)isCamera
@@ -391,7 +448,13 @@ static NSDictionary* TI_filterableItemProperties;
 	}
 	
 	if (isCamera) {
-		[self displayCamera:picker];
+		BOOL inPopOver = [TiUtils boolValue:@"inPopOver" properties:args def:NO];
+		if (inPopOver) {
+			[self displayModalPicker:picker settings:args];
+		}
+		else {
+			[self displayCamera:picker];
+		}
 	} else {
 		[self displayModalPicker:picker settings:args];
 	}
@@ -435,6 +498,9 @@ static NSDictionary* TI_filterableItemProperties;
 		NSDictionary* event = [NSDictionary dictionaryWithObject:path forKey:@"path"];
 		[NSThread detachNewThreadSelector:@selector(dispatchCallback:) toTarget:self withObject:[NSArray arrayWithObjects:@"success",event,successCallback,nil]];					
 	}
+    
+    // This object was retained for use in this callback; release it.
+    [saveCallbacks release]; 
 }
 
 #pragma mark Public APIs
@@ -447,15 +513,23 @@ MAKE_SYSTEM_PROP(NO_MUSIC_PLAYER,MediaModuleErrorNoMusicPlayer);
 
 
 // >=3.2 dependent value; this one isn't deprecated
--(NSNumber*)VIDEO_CONTROL_DEFAULT
+MAKE_SYSTEM_PROP(VIDEO_CONTROL_DEFAULT, MPMovieControlStyleDefault);
+
+// Deprecated old-school video control modes, mapped to the new values
+-(NSNumber*)VIDEO_CONTROL_VOLUME_ONLY
 {
-	return NUMINT(MPMovieControlStyleDefault);
+    DEPRECATED_REPLACED(@"Ti.Media.VIDEO_CONTROL_VOLUME_ONLY", @"1.8.0", @"1.9.0", @"Ti.Media.VIDEO_CONTROL_EMBEDDED");
+    return [self VIDEO_CONTROL_EMBEDDED];
 }
 
-// these have been deprecated in 3.2 but we need them for older devices
-MAKE_SYSTEM_PROP(VIDEO_CONTROL_VOLUME_ONLY,MPMovieControlModeVolumeOnly);
-MAKE_SYSTEM_PROP(VIDEO_CONTROL_HIDDEN,MPMovieControlModeHidden);
- 
+-(NSNumber*)VIDEO_CONTROL_HIDDEN
+{
+    // This constant is still available in a non-deprecated manner in Android for 1.8; we should keep it around
+    // until there's a parity discussion.
+    // TODO: Does this need to be deprecated? For now, return the right value.
+    return [self VIDEO_CONTROL_NONE];
+}
+
 MAKE_SYSTEM_PROP(VIDEO_SCALING_NONE,MPMovieScalingModeNone);
 MAKE_SYSTEM_PROP(VIDEO_SCALING_ASPECT_FIT,MPMovieScalingModeAspectFit);
 MAKE_SYSTEM_PROP(VIDEO_SCALING_ASPECT_FILL,MPMovieScalingModeAspectFill);
@@ -750,7 +824,7 @@ MAKE_SYSTEM_PROP(VIDEO_FINISH_REASON_USER_EXITED,MPMovieFinishReasonUserExited);
 	}
 	
 	TiApp * tiApp = [TiApp app];
-	[[tiApp controller] manuallyRotateToOrientation:UIInterfaceOrientationPortrait];
+	[[tiApp controller] manuallyRotateToOrientation:UIInterfaceOrientationPortrait duration:[[tiApp controller] suggestedRotationDuration]];
 	[tiApp showModalController:editor animated:animated];
 }
 
@@ -826,17 +900,9 @@ MAKE_SYSTEM_PROP(VIDEO_FINISH_REASON_USER_EXITED,MPMovieFinishReasonUserExited);
 	ENSURE_SINGLE_ARG(arg,KrollCallback);
 
     // Create a graphics context with the target size
-    // On iOS 4 and later, use UIGraphicsBeginImageContextWithOptions to take the scale into consideration
-    // On iOS prior to 4, fall back to use UIGraphicsBeginImageContext
-
-    float systemVersion = [[[UIDevice currentDevice] systemVersion] floatValue];
 
  	CGSize imageSize = [[UIScreen mainScreen] bounds].size;
-
- 	if (systemVersion >= 4.0f)
-		UIGraphicsBeginImageContextWithOptions(imageSize, NO, 0);
-	else
-		UIGraphicsBeginImageContext(imageSize);
+	UIGraphicsBeginImageContextWithOptions(imageSize, NO, 0);
 
 	CGContextRef context = UIGraphicsGetCurrentContext();
 
@@ -870,6 +936,21 @@ MAKE_SYSTEM_PROP(VIDEO_FINISH_REASON_USER_EXITED,MPMovieFinishReasonUserExited);
 
     UIGraphicsEndImageContext();
 
+	UIInterfaceOrientation windowOrientation = [[TiApp controller] windowOrientation];
+	switch (windowOrientation) {
+		case UIInterfaceOrientationPortraitUpsideDown:
+			image = [UIImage imageWithCGImage:[image CGImage] scale:[image scale] orientation:UIImageOrientationDown];
+			break;
+		case UIInterfaceOrientationLandscapeLeft:
+			image = [UIImage imageWithCGImage:[image CGImage] scale:[image scale] orientation:UIImageOrientationRight];
+			break;
+		case UIInterfaceOrientationLandscapeRight:
+			image = [UIImage imageWithCGImage:[image CGImage] scale:[image scale] orientation:UIImageOrientationLeft];
+			break;
+		default:
+			break;
+	}
+	
 	TiBlob *blob = [[[TiBlob alloc] initWithImage:image] autorelease];
 	NSDictionary *event = [NSDictionary dictionaryWithObject:blob forKey:@"media"];
 	[self _fireEventToListener:@"screenshot" withObject:event listener:arg thisObject:nil];
@@ -904,9 +985,40 @@ MAKE_SYSTEM_PROP(VIDEO_FINISH_REASON_USER_EXITED,MPMovieFinishReasonUserExited);
 		}
 		else if ([mime hasPrefix:@"video/"])
 		{
-			NSString * tempFilePath = [blob path];
-			if (tempFilePath == nil) return;
-			UISaveVideoAtPathToSavedPhotosAlbum(tempFilePath, self, @selector(saveCompletedForVideo:error:contextInfo:), [saveCallbacks retain]);
+            NSString* filePath;
+            switch ([blob type]) {
+                case TiBlobTypeFile: {
+                    filePath = [blob path];
+                    break;
+                }
+                case TiBlobTypeData: {
+                    // In this case, we need to write the blob data to a /tmp file and then load it.
+                    NSArray* typeinfo = [mime componentsSeparatedByString:@"/"];
+                    TiFile* tempFile = [TiUtils createTempFile:[typeinfo objectAtIndex:1]];
+                    filePath = [tempFile path];
+                    
+                    NSError* error = nil;
+                    [blob writeTo:filePath error:&error];
+                    
+                    if (error != nil) {
+                        NSDictionary* event = [NSDictionary dictionaryWithObject:[NSString stringWithFormat:@"problem writing to temporary file %@: %@", filePath, [error localizedDescription]]
+                                                                          forKey:@"error"];
+                        [self dispatchCallback:[NSArray arrayWithObjects:@"error",event,[saveCallbacks valueForKey:@"error"],nil]];
+                        return;
+                    }
+                    
+                    // Have to keep the temp file from being deleted when we leave scope, so add it to the userinfo so it can be cleaned up there
+                    [saveCallbacks setValue:tempFile forKey:@"tempFile"];
+                    break;
+                }
+                default: {
+                    NSDictionary* event = [NSDictionary dictionaryWithObject:@"invalid media format: MIME type was video/, but data is image"
+                                                                      forKey:@"error"];
+                    [self dispatchCallback:[NSArray arrayWithObjects:@"error",event,[saveCallbacks valueForKey:@"error"],nil]];
+                    return;
+                }
+            }
+			UISaveVideoAtPathToSavedPhotosAlbum(filePath, self, @selector(saveCompletedForVideo:error:contextInfo:), [saveCallbacks retain]);
 		}
 	}
 	else if ([image isKindOfClass:[TiFile class]])
@@ -968,7 +1080,17 @@ MAKE_SYSTEM_PROP(VIDEO_FINISH_REASON_USER_EXITED,MPMovieFinishReasonUserExited);
 	ENSURE_UI_THREAD(hideCamera,args);
 	if (picker!=nil)
 	{
-		[[TiApp app] hideModalController:picker animated:animatedPicker];
+		if (popover != nil) {
+			[popover dismissPopoverAnimated:animatedPicker];
+			RELEASE_TO_NIL(popover);
+
+			//Unregister for interface change notification 
+			[[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationWillChangeStatusBarOrientationNotification object:nil];
+			[[NSNotificationCenter defaultCenter] removeObserver:self name:UIDeviceOrientationDidChangeNotification object:nil];
+		}
+		else {
+			[[TiApp app] hideModalController:picker animated:animatedPicker];
+		}
 		[self destroyPicker];
 	}
 }

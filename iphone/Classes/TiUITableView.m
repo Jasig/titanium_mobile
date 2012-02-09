@@ -720,18 +720,23 @@
 	}
 
 	if ([searchController searchResultsTableView] != nil) {
-        [self updateSearchResultIndexes];
+		[self updateSearchResultIndexes];
         
-        // Because -[UITableView reloadData] queues on the main runloop, we need to sync the search
-        // table reload to the same method. The only time we reloadData, though, is when setting the
-        // data, so toggle a flag to indicate what the search should do.
-        if (reloadSearch) {
-            [[searchController searchResultsTableView] reloadData];
-        }
-        else {
-            [[searchController searchResultsTableView] reloadSections:[NSIndexSet indexSetWithIndex:0]
+		// Because -[UITableView reloadData] queues on the main runloop, we need to sync the search
+		// table reload to the same method. The only time we reloadData, though, is when setting the
+		// data, so toggle a flag to indicate what the search should do.
+		if (reloadSearch) {
+			[[searchController searchResultsTableView] reloadData];
+		}
+		else {
+			[[searchController searchResultsTableView] reloadSections:[NSIndexSet indexSetWithIndex:0]
                                                      withRowAnimation:UITableViewRowAnimationFade];
-        }
+		}
+		//On data reload if the search screen is inactive,
+		//make sure that the searchHidden flag is honored
+		if (![searchController isActive] && searchHidden) {
+			[self hideSearchScreen:self];
+		}
 	}
 }
 
@@ -1055,9 +1060,10 @@
 		[self performSelector:@selector(hideSearchScreen:) withObject:sender afterDelay:0.1];
 		return;
 	}
-	
-	[[searchField view] resignFirstResponder];
-	[self makeRootViewFirstResponder];
+    if ([[searchField view] isFirstResponder]) {
+        [[searchField view] resignFirstResponder];
+        [self makeRootViewFirstResponder];
+    }
 	[self.proxy replaceValue:NUMBOOL(YES) forKey:@"searchHidden" notification:NO];
 	[searchController setActive:NO animated:YES];
 	
@@ -1900,7 +1906,7 @@ if(ourTableView != tableview)	\
 
 - (CGFloat)tableView:(UITableView *)ourTableView heightForHeaderInSection:(NSInteger)section
 {
-	RETURN_IF_SEARCH_TABLE_VIEW(ourTableView.sectionHeaderHeight);
+	RETURN_IF_SEARCH_TABLE_VIEW(0.0);
 	TiUITableViewSectionProxy *sectionProxy = nil;
 	TiUIView *view = [self sectionView:section forLocation:@"headerView" section:&sectionProxy];
 	TiViewProxy *viewProxy = (TiViewProxy *)[view proxy];
@@ -1947,7 +1953,7 @@ if(ourTableView != tableview)	\
 
 - (CGFloat)tableView:(UITableView *)ourTableView heightForFooterInSection:(NSInteger)section
 {
-	RETURN_IF_SEARCH_TABLE_VIEW(ourTableView.sectionFooterHeight);
+	RETURN_IF_SEARCH_TABLE_VIEW(0.0);
 	TiUITableViewSectionProxy *sectionProxy = nil;
 	TiUIView *view = [self sectionView:section forLocation:@"footerView" section:&sectionProxy];
 	TiViewProxy *viewProxy = (TiViewProxy *)[view proxy];
@@ -1991,16 +1997,18 @@ if(ourTableView != tableview)	\
 
 -(void)scrollToShowView:(TiUIView *)firstResponderView withKeyboardHeight:(CGFloat)keyboardTop
 {
-	int lastSectionIndex = [(TiUITableViewProxy *)[self proxy] sectionCount]-1;
-	ENSURE_CONSISTENCY(lastSectionIndex>=0);
-	CGRect minimumContentRect = [tableview rectForSection:lastSectionIndex];
-
-	CGRect responderRect = [self convertRect:[firstResponderView bounds] fromView:firstResponderView];
-	CGPoint offsetPoint = [tableview contentOffset];
-	responderRect.origin.x += offsetPoint.x;
-	responderRect.origin.y += offsetPoint.y;
-
-	OffsetScrollViewForRect(tableview,keyboardTop,minimumContentRect.size.height + minimumContentRect.origin.y,responderRect);
+    if ([tableview isScrollEnabled]) {
+        int lastSectionIndex = [(TiUITableViewProxy *)[self proxy] sectionCount]-1;
+        ENSURE_CONSISTENCY(lastSectionIndex>=0);
+        CGRect minimumContentRect = [tableview rectForSection:lastSectionIndex];
+        
+        CGRect responderRect = [self convertRect:[firstResponderView bounds] fromView:firstResponderView];
+        CGPoint offsetPoint = [tableview contentOffset];
+        responderRect.origin.x += offsetPoint.x;
+        responderRect.origin.y += offsetPoint.y;
+        
+        OffsetScrollViewForRect(tableview,keyboardTop,minimumContentRect.size.height + minimumContentRect.origin.y,responderRect);
+    }
 }
 
 -(void)keyboardDidShowAtHeight:(CGFloat)keyboardTop forView:(TiUIView *)firstResponderView

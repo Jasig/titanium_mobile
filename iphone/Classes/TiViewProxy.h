@@ -20,6 +20,16 @@
 
 @end
 
+/*
+ This Protocol will be implemented by objects that want to
+ monitor views not in the normal view heirarchy. 
+*/
+@protocol TiProxyObserver
+@optional
+-(void)proxyDidRelayout:(id)sender;
+
+@end
+
 
 #pragma mark dirtyflags used by TiViewProxy
 #define NEEDS_LAYOUT_CHILDREN	1
@@ -85,6 +95,8 @@ enum
 	BOOL viewInitialized;
 	BOOL repositioning;
 	BOOL isUsingBarButtonItem;
+    
+    id observer;
 }
 
 #pragma mark public API
@@ -92,6 +104,7 @@ enum
 @property(nonatomic,readwrite,assign) BOOL parentVisible; // For tableview magic ONLY
 @property(nonatomic,readonly) NSArray *children;
 
+-(void)setProxyObserver:(id)arg;
 -(void)add:(id)arg;
 -(void)remove:(id)arg;
 -(void)show:(id)arg;
@@ -178,9 +191,6 @@ enum
 
 #pragma mark Callbacks
 
--(void)getAnimatedCenterPoint:(NSMutableDictionary *)resultDict;
--(void)addImageToBlob:(NSArray*)args;
-
 -(void)animationCompleted:(TiAnimation*)animation;
 -(void)makeViewPerformAction:(TiAction *)action;
 
@@ -236,15 +246,6 @@ enum
 -(resultType) methodname: (inputType)value	\
 {	\
 	return [[self view] methodname:value];	\
-}
-
-#define USE_VIEW_FOR_UI_METHOD(methodname)	\
--(void)methodname:(id)args	\
-{	\
-	if ([self viewAttached])	\
-	{	\
-		[[self view] performSelectorOnMainThread:@selector(methodname:) withObject:args waitUntilDone:NO];	\
-	}	\
 }
 
 #define USE_VIEW_FOR_VERIFY_WIDTH	USE_VIEW_FOR_METHOD(CGFloat,verifyWidth,CGFloat)

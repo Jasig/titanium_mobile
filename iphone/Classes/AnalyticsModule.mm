@@ -393,11 +393,16 @@ NSString * const TI_DB_VERSION = @"1";
 -(void)loadDB:(NSString*)path create:(BOOL)create
 {
 	[lock lock];
+    if ([database goodConnection]) {
+		[lock unlock];
+		return;
+    }
 	// make sure SQLite can run from multiple threads
 	sqlite3_enable_shared_cache(TRUE);
 
 	NSString *filepath = [NSString stringWithFormat:@"%@/analytics.db",path];
 	
+    RELEASE_TO_NIL(database);
 	database = [[PLSqliteDatabase alloc] initWithPath:filepath];
 	if (![database open])
 	{
@@ -480,7 +485,7 @@ NSString * const TI_DB_VERSION = @"1";
     }
 }
 
--(void)begin
+-(NSDictionary *)startupDataPayload
 {
 	BOOL enrolled = NO;
 	NSString *path = [self checkForEnrollment:&enrolled];
@@ -518,8 +523,7 @@ NSString * const TI_DB_VERSION = @"1";
 						   @"iphone", @"platform",
 						   nil
 						   ];
-	
-	[self queueEvent:@"ti.start" name:@"ti.start" data:data immediate:NO];
+	return data;
 }
 
 #pragma mark Lifecycle
@@ -541,7 +545,7 @@ NSString * const TI_DB_VERSION = @"1";
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(analyticsEvent:) name:kTiAnalyticsNotification object:nil];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(remoteDeviceUUIDChanged:) name:kTiRemoteDeviceUUIDNotification object:nil];
 	
-	[self begin];
+	[self queueEvent:@"ti.start" name:@"ti.start" data:[self startupDataPayload] immediate:NO];
 	[super startup];
 }
 
@@ -567,6 +571,12 @@ NSString * const TI_DB_VERSION = @"1";
 		NSString *name = [event objectForKey:@"name"];
 		NSString *type = [event objectForKey:@"type"];
 		NSDictionary *data = [event objectForKey:@"data"];
+		
+		if (IS_NULL_OR_NIL(data) && [type isEqualToString:@"ti.foreground"]) {
+			//Do we want to open this up to other events? On one hand, more data
+			//is good. On the other, sending unneeded data is expensive.
+			data = [self startupDataPayload];
+		}
 		[self queueEvent:type name:name data:data immediate:NO];
 	}
 	else

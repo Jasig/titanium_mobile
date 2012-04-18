@@ -41,6 +41,7 @@ events:
     properties:
       - name: range
         summary: A range of text. The range is an object with the properties `location` and `length`.
+    platforms: [iphone, ipad]
 properties:
   - name: appearance
     summary: Determines the appearance of the keyboard displayed when this text area is focused.
@@ -73,16 +74,24 @@ properties:
     summary: Is the text area enabled?
     type: Boolean
     default: true
+  - name: font
+    summary: Font to use for text.
+    type: Font
   - name: keyboardToolbar
-    summary: Array of toolbar button objects to be used when the keyboard is displayed.
-    type: Array<Object>
+    summary: Array of toolbar button objects or a [toolbar](Titanium.UI.iOS.Toolbar) to be used when the keyboard is displayed.
+    description: |
+        As of 1.9.0, because iOS disallows a view (including toolbar buttons) to be in two places at
+        once, developers desiring textAreas or [textFields](Titanium.UI.TextField) to share a toolbar
+        can instead use a single [toolbar](Titanium.UI.iOS.Toolbar) instead of having arrays sharing
+        toolbar buttons.
+    type: [Array<Titanium.UI.View>, Titanium.UI.iOS.Toolbar]
     platforms: [iphone,ipad]
   - name: keyboardToolbarColor
-    summary: Color of the keyboard toolbar.
+    summary: Color of the keyboard toolbar if keyboardToolbar is an array.
     type: String
     platforms: [iphone,ipad]
   - name: keyboardToolbarHeight
-    summary: Height of the keyboard toolbar.
+    summary: Height of the keyboard toolbar if keyboardToolbar is an array.
     type: Number
     platforms: [iphone,ipad]
   - name: keyboardType
@@ -104,6 +113,7 @@ properties:
   - name: suppressReturn
     summary: Should the return key be suppressed during entry?
     type: Boolean
+    platforms: [iphone,ipad,mobileweb]
   - name: textAlign
     summary: |
         Text alignment, specified using one of the <Titanium.UI> text alignment constants: [TEXT_ALIGNMENT_LEFT](Titanium.UI.TEXT_ALIGNMENT_LEFT), [TEXT_ALIGNMENT_CENTER](Titanium.UI.TEXT_ALIGNMENT_CENTER), or [TEXT_ALIGNMENT_RIGHT](Titanium.UI.TEXT_ALIGNMENT_RIGHT).

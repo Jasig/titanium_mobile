@@ -1,6 +1,6 @@
 /**
  * Appcelerator Titanium Mobile
- * Copyright (c) 2010-2011 by Appcelerator, Inc. All Rights Reserved.
+ * Copyright (c) 2010-2012 by Appcelerator, Inc. All Rights Reserved.
  * Licensed under the terms of the Apache Public License
  * Please see the LICENSE included with this distribution for details.
  */
@@ -84,6 +84,7 @@ import org.appcelerator.titanium.TiBlob;
 import org.appcelerator.titanium.TiFileProxy;
 import org.appcelerator.titanium.io.TiBaseFile;
 import org.appcelerator.titanium.io.TiFile;
+import org.appcelerator.titanium.io.TiResourceFile;
 import org.appcelerator.titanium.util.TiConvert;
 import org.appcelerator.titanium.util.TiMimeTypeHelper;
 
@@ -98,7 +99,6 @@ public class TiHTTPClient
 {
 	private static final String LCAT = "TiHttpClient";
 	private static final boolean DBG = TiConfig.LOGD;
-	private static final int IS_BINARY_THRESHOLD = 30;
 	private static final int DEFAULT_MAX_BUFFER_SIZE = 512 * 1024;
 	private static final String PROPERTY_MAX_BUFFER_SIZE = "ti.android.httpclient.maxbuffersize";
 	private static final int PROTOCOL_DEFAULT_PORT = -1;
@@ -239,10 +239,10 @@ public class TiHTTPClient
 
 				if (DBG) {
 					try {
-						Log.w(LCAT, "Entity Type: " + response.getEntity().getClass());
-						Log.w(LCAT, "Entity Content Type: " + response.getEntity().getContentType().getValue());
-						Log.w(LCAT, "Entity isChunked: " + response.getEntity().isChunked());
-						Log.w(LCAT, "Entity isStreaming: " + response.getEntity().isStreaming());
+						Log.d(LCAT, "Entity Type: " + response.getEntity().getClass());
+						Log.d(LCAT, "Entity Content Type: " + response.getEntity().getContentType().getValue());
+						Log.d(LCAT, "Entity isChunked: " + response.getEntity().isChunked());
+						Log.d(LCAT, "Entity isStreaming: " + response.getEntity().isStreaming());
 					} catch (Throwable t) {
 						// Ignore
 					}
@@ -557,6 +557,12 @@ public class TiHTTPClient
 		{
 			// TODO - implement converter method for array to hashmap?
 			cb.callAsync(proxy.getKrollObject(), args);
+		} else {
+			// It's particularly interesting if an error wants to be reported
+			// but no one is listening, so log that.
+			if (ON_ERROR.equals(name)) {
+				Log.w(LCAT, "No onerror callback specified; it would be called if it were.");
+			}
 		}
 	}
 
@@ -576,7 +582,9 @@ public class TiHTTPClient
 	
 	public void setReadyState(int readyState)
 	{
-		Log.d(LCAT, "Setting ready state to " + readyState);
+		if (DBG) {
+			Log.d(LCAT, "Setting ready state to " + readyState);
+		}
 		this.readyState = readyState;
 
 		fireCallback(ON_READY_STATE_CHANGE);
@@ -597,37 +605,17 @@ public class TiHTTPClient
 
 	public String getResponseText()
 	{
-		if (responseData != null && responseText == null)
-		{
-			byte[] data = responseData.getBytes();
+		if (responseData != null && responseText == null) {
 			if (charset == null) {
-				// Detect binary
-				int binaryCount = 0;
-				int len = data.length;
-
-				if (len > 0) {
-					for (int i = 0; i < len; i++) {
-						byte b = data[i];
-						if (b < 32 || b > 127 ) {
-							if (b != '\n' && b != '\r' && b != '\t' && b != '\b') {
-								binaryCount++;
-							}
-						}
-					}
-
-					if ((binaryCount * 100)/len >= IS_BINARY_THRESHOLD) {
-						return null;
-					}
-				}
-
-				charset = HTTP.DEFAULT_CONTENT_CHARSET;
+				charset = HTTP.UTF_8;
 			}
 
 			try {
-				responseText = new String(data, charset);
-
+				responseText = new String(responseData.getBytes(), charset);
 			} catch (UnsupportedEncodingException e) {
 				Log.e(LCAT, "Unable to convert to String using charset: " + charset);
+			} catch (OutOfMemoryError e) {
+				Log.e(LCAT, "Unable to get response text: out of memory");
 			}
 		}
 
@@ -951,14 +939,23 @@ public class TiHTTPClient
 	public int addTitaniumFileAsPostData(String name, Object value)
 	{
 		try {
-			if (value instanceof TiBaseFile) {
+			// TiResourceFile cannot use the FileBody approach directly, because it requires
+			// a java File object, which you can't get from packaged resources. So
+			// TiResourceFile uses the approach we use for blobs, which is write out the
+			// contents to a temp file, then use that for the FileBody.
+			if (value instanceof TiBaseFile && !(value instanceof TiResourceFile)) {
 				TiBaseFile baseFile = (TiBaseFile) value;
 				FileBody body = new FileBody(baseFile.getNativeFile(), TiMimeTypeHelper.getMimeType(baseFile.nativePath()));
 				parts.put(name, body);
 				return (int)baseFile.getNativeFile().length();
 
-			} else if (value instanceof TiBlob) {
-				TiBlob blob = (TiBlob) value;
+			} else if (value instanceof TiBlob || value instanceof TiResourceFile) {
+				TiBlob blob;
+				if (value instanceof TiBlob) {
+					blob = (TiBlob) value;
+				} else {
+					blob = ((TiResourceFile) value).read();
+				}
 				String mimeType = blob.getMimeType();
 				File tmpFile = File.createTempFile("tixhr", "." + TiMimeTypeHelper.getFileExtensionFromMimeType(mimeType, "txt"));
 				FileOutputStream fos = new FileOutputStream(tmpFile);
@@ -1124,13 +1121,7 @@ public class TiHTTPClient
 				if (DBG) {
 					Log.d(LCAT, "send()");
 				}
-				/*
-				Header[] h = request.getAllHeaders();
-				for(int i=0; i < h.length; i++) {
-					Header hdr = h[i];
-					//Log.e(LCAT, "HEADER: " + hdr.toString());
-				}
-				 */
+
 				handler = new LocalResponseHandler(TiHTTPClient.this);
 
 				// lazy get client each time in case the validatesSecureCertificate() changes
@@ -1158,7 +1149,9 @@ public class TiHTTPClient
 					if (parts.size() > 0 && needMultipart) {
 						mpe = new MultipartEntity();
 						for(String name : parts.keySet()) {
-							Log.d(LCAT, "adding part " + name + ", part type: " + parts.get(name).getMimeType() + ", len: " + parts.get(name).getContentLength());
+							if (DBG) {
+								Log.d(LCAT, "adding part " + name + ", part type: " + parts.get(name).getMimeType() + ", len: " + parts.get(name).getContentLength());
+							}
 							mpe.addPart(name, parts.get(name));
 						}
 
@@ -1177,7 +1170,6 @@ public class TiHTTPClient
 						}
 
 						HttpEntityEnclosingRequest e = (HttpEntityEnclosingRequest) request;
-						Log.d(LCAT, "totalLength="+totalLength);
 
 						ProgressEntity progressEntity = new ProgressEntity(mpe, new ProgressListener() {
 							public void progress(int progress) {
@@ -1220,7 +1212,9 @@ public class TiHTTPClient
 				}
 
 				if(result != null) {
-					Log.d(LCAT, "Have result back from request len=" + result.length());
+					if (DBG) {
+						Log.d(LCAT, "Have result back from request len=" + result.length());
+					}
 				}
 				connected = false;
 				setResponseText(result);
@@ -1228,7 +1222,9 @@ public class TiHTTPClient
 
 			} catch(Throwable t) {
 				if (client != null) {
-					Log.d(LCAT, "clearing the expired and idle connections");
+					if (DBG) {
+						Log.d(LCAT, "clearing the expired and idle connections");
+					}
 					client.getConnectionManager().closeExpiredConnections();
 					client.getConnectionManager().closeIdleConnections(0, TimeUnit.NANOSECONDS);
 

@@ -17,7 +17,9 @@ import org.appcelerator.kroll.common.TiDeployData;
 
 import android.os.Build;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
+import android.os.MessageQueue.IdleHandler;
 import android.util.Log;
 
 public final class V8Runtime extends KrollRuntime implements Handler.Callback
@@ -50,8 +52,6 @@ public final class V8Runtime extends KrollRuntime implements Handler.Callback
 			System.loadLibrary("kroll-v8");
 			libLoaded = true;
 		}
-
-
 		
 		boolean DBG = true;
 		String deployType = getKrollApplication().getDeployType();
@@ -64,8 +64,17 @@ public final class V8Runtime extends KrollRuntime implements Handler.Callback
 		if (deployData.isDebuggerEnabled()) {
 			dispatchDebugMessages();
 		}
-
+		
 		loadExternalModules();
+
+		Looper.myQueue().addIdleHandler(new IdleHandler() {
+			@Override
+			public boolean queueIdle()
+			{
+				nativeIdle();
+				return true;
+			}
+		});
 	}
 
 	private void loadExternalModules()
@@ -147,6 +156,7 @@ public final class V8Runtime extends KrollRuntime implements Handler.Callback
 	private native void nativeInit(boolean useGlobalRefs, int debuggerPort, boolean DBG);
 	private native void nativeRunModule(String source, String filename, KrollProxySupport activityProxy);
 	private native void nativeProcessDebugMessages();
+	private native void nativeIdle();
 	private native void nativeDispose();
 }
 

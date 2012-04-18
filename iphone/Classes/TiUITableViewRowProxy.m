@@ -259,8 +259,8 @@ TiProxy * DeepScanForProxyOfViewContainingPoint(UIView * targetView, CGPoint poi
 -(void)_destroy
 {
 	RELEASE_TO_NIL(tableClass);
-    [rowContainerView performSelectorOnMainThread:@selector(removeFromSuperview) withObject:nil waitUntilDone:NO];
-	[rowContainerView performSelectorOnMainThread:@selector(release) withObject:nil waitUntilDone:NO];
+	TiThreadRemoveFromSuperviewOnMainThread(rowContainerView, NO);
+	TiThreadReleaseOnMainThread(rowContainerView, NO);
 	rowContainerView = nil;
 	[callbackCell setProxy:nil];
 	callbackCell = nil;
@@ -350,6 +350,9 @@ TiProxy * DeepScanForProxyOfViewContainingPoint(UIView * targetView, CGPoint poi
 	{
 		result = [self autoHeightForWidth:width];
 	}
+    if (TiDimensionIsPercent(height) && [self table] != nil) {
+        result = TiDimensionCalculateValue(height, [self table].bounds.size.height);
+    }
 	return (result == 0) ? [table tableRowHeight:0] : result;
 }
 
@@ -731,7 +734,7 @@ TiProxy * DeepScanForProxyOfViewContainingPoint(UIView * targetView, CGPoint poi
 		TiUITableViewAction *action = [[[TiUITableViewAction alloc] initWithObject:self 
 																		 animation:nil 
 																			  type:TiUITableViewActionRowReload] autorelease];
-		[self performSelectorOnMainThread:@selector(updateRow:) withObject:action waitUntilDone:NO];
+		TiThreadPerformOnMainThread(^{[self updateRow:action];}, NO);
 	}
 }
 
@@ -836,18 +839,14 @@ TiProxy * DeepScanForProxyOfViewContainingPoint(UIView * targetView, CGPoint poi
 {
 	TiGradient * newGradient = [TiGradient gradientFromObject:arg proxy:self];
 	[self replaceValue:newGradient forKey:@"backgroundGradient" notification:NO];
-	
-	[callbackCell performSelectorOnMainThread:@selector(setBackgroundGradient_:)
-			withObject:newGradient waitUntilDone:NO];
+	TiThreadPerformOnMainThread(^{[callbackCell setBackgroundGradient_:newGradient];}, NO);
 }
 
 -(void)setSelectedBackgroundGradient:(id)arg
 {
 	TiGradient * newGradient = [TiGradient gradientFromObject:arg proxy:self];
 	[self replaceValue:newGradient forKey:@"selectedBackgroundGradient" notification:NO];
-	
-	[callbackCell performSelectorOnMainThread:@selector(setSelectedBackgroundGradient_:)
-			withObject:newGradient waitUntilDone:NO];
+	TiThreadPerformOnMainThread(^{[callbackCell setSelectedBackgroundGradient_:newGradient];}, NO);
 }
 
 

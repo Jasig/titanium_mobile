@@ -47,6 +47,7 @@ static NSDictionary* TI_itemProperties;
 static NSDictionary* TI_filterableItemProperties;
 
 @implementation MediaModule
+@synthesize popoverView;
 
 #pragma mark Internal
 
@@ -97,6 +98,7 @@ static NSDictionary* TI_filterableItemProperties;
 -(void)destroyPicker
 {
 	RELEASE_TO_NIL(popover);
+    RELEASE_TO_NIL(cameraView);
 	RELEASE_TO_NIL(editor);
 	RELEASE_TO_NIL(editorSuccessCallback);
 	RELEASE_TO_NIL(editorErrorCallback);
@@ -113,6 +115,8 @@ static NSDictionary* TI_filterableItemProperties;
 	[self destroyPicker];
 	RELEASE_TO_NIL(systemMusicPlayer);
 	RELEASE_TO_NIL(appMusicPlayer);
+	RELEASE_TO_NIL(popoverView);
+	[[NSNotificationCenter defaultCenter] removeObserver:self];
 	[super dealloc];
 }
 
@@ -228,14 +232,69 @@ static NSDictionary* TI_filterableItemProperties;
 			poFrame.size.height = 50;
 		}
 
+		//FROM APPLE DOCS
+		//If you presented the popover from a target rectangle in a view, the popover controller does not attempt to reposition the popover. 
+		//In thosecases, you must manually hide the popover or present it again from an appropriate new position.
+		//We will register for interface change notification for this purpose
+		
+		//This registration tells us when the rotation begins.
+		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(manageRotation:) name:UIApplicationWillChangeStatusBarOrientationNotification object:nil];
+		
+		//This registration lets us sync with the TiRootViewController's orientation notification (didOrientNotify method)
+		//No need to begin generating these events since the TiRootViewController already does that
+		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updatePopover:) name:UIDeviceOrientationDidChangeNotification object:nil];
+		arrowDirection = arrow;
+		popoverView = poView;
 		popover = [[UIPopoverController alloc] initWithContentViewController:picker_];
 		[popover setDelegate:self];
 		[popover presentPopoverFromRect:poFrame inView:poView permittedArrowDirections:arrow animated:animatedPicker];
 	}
 }
 
+-(void)manageRotation:(NSNotification *)notification
+{
+	//Capture the old orientation
+	oldOrientation = [[UIApplication sharedApplication]statusBarOrientation];
+	//Capture the new orientation
+	newOrientation = [[notification.userInfo valueForKey:UIApplicationStatusBarOrientationUserInfoKey] integerValue];
+}
+-(void)updatePopover:(NSNotification *)notification
+{
+	if (isPresenting) {
+		return;
+	}
+	//Set up the right delay
+	NSTimeInterval delay = [[UIApplication sharedApplication] statusBarOrientationAnimationDuration];
+	if ( (oldOrientation == UIInterfaceOrientationPortrait) && (newOrientation == UIInterfaceOrientationPortraitUpsideDown) ){	
+		delay*=2.0;
+	}
+	else if ( (oldOrientation == UIInterfaceOrientationLandscapeLeft) && (newOrientation == UIInterfaceOrientationLandscapeRight) ){
+		delay *=2.0;
+	}
+	
+	//Allow the root view controller to relayout all child view controllers so that we get the correct frame size when we re-present
+	[self performSelector:@selector(updatePopoverNow) withObject:nil afterDelay:delay inModes:[NSArray arrayWithObject:NSRunLoopCommonModes]];
+}
+
+-(void)updatePopoverNow
+{
+	isPresenting = YES;
+	if (popover) {
+		//GO AHEAD AND RE-PRESENT THE POPOVER NOW 
+		CGRect popOverRect = [popoverView bounds];
+		if (popoverView == [[TiApp app] controller].view) {
+			popOverRect.size.height = 50;
+		}
+		[popover presentPopoverFromRect:popOverRect inView:popoverView permittedArrowDirections:arrowDirection animated:NO];
+	}
+	isPresenting = NO;
+}
+
 -(void)closeModalPicker:(UIViewController*)picker_
 {
+    if (cameraView != nil) {
+        [cameraView windowWillClose];
+    }
 	if (popover)
 	{
 		[(UIPopoverController*)popover dismissPopoverAnimated:animatedPicker];
@@ -245,6 +304,10 @@ static NSDictionary* TI_filterableItemProperties;
 	{
 		[[TiApp app] hideModalController:picker_ animated:animatedPicker];
 	}
+    if (cameraView != nil) {
+        [cameraView windowDidClose];
+        RELEASE_TO_NIL(cameraView);
+    }
 }
 
 - (void)popoverControllerDidDismissPopover:(UIPopoverController *)popoverController
@@ -255,6 +318,9 @@ static NSDictionary* TI_filterableItemProperties;
 	
 	RELEASE_TO_NIL(popover);
 	[self destroyPicker];
+	//Unregister for interface change notification 
+	[[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationWillChangeStatusBarOrientationNotification object:nil];
+	[[NSNotificationCenter defaultCenter] removeObserver:self name:UIDeviceOrientationDidChangeNotification object:nil];
 }
 
 -(void)showPicker:(NSDictionary*)args isCamera:(BOOL)isCamera
@@ -359,10 +425,11 @@ static NSDictionary* TI_filterableItemProperties;
 		[picker setShowsCameraControls:[TiUtils boolValue:@"showControls" properties:args def:YES]];
 		
 		// allow an overlay view
-		TiViewProxy *cameraView = [args objectForKey:@"overlay"]; 
-		if (cameraView!=nil)
+		TiViewProxy *cameraViewProxy = [args objectForKey:@"overlay"];
+		if (cameraViewProxy!=nil)
 		{
-			ENSURE_TYPE(cameraView,TiViewProxy);
+			ENSURE_TYPE(cameraViewProxy,TiViewProxy);
+            cameraView = [cameraViewProxy retain];
 			UIView *view = [cameraView view];
 			if (editable)
 			{
@@ -372,7 +439,9 @@ static NSDictionary* TI_filterableItemProperties;
 			}
 			[TiUtils setView:view positionRect:[picker view].bounds];
 			[cameraView layoutChildren:NO];
+            [cameraView windowWillOpen];
 			[picker setCameraOverlayView:view];
+            [cameraView windowDidOpen];
 			[picker setWantsFullScreenLayout:YES];
 		}
 		
@@ -391,7 +460,13 @@ static NSDictionary* TI_filterableItemProperties;
 	}
 	
 	if (isCamera) {
-		[self displayCamera:picker];
+		BOOL inPopOver = [TiUtils boolValue:@"inPopOver" properties:args def:NO];
+		if (inPopOver) {
+			[self displayModalPicker:picker settings:args];
+		}
+		else {
+			[self displayCamera:picker];
+		}
 	} else {
 		[self displayModalPicker:picker settings:args];
 	}
@@ -663,8 +738,8 @@ MAKE_SYSTEM_PROP(VIDEO_FINISH_REASON_USER_EXITED,MPMovieFinishReasonUserExited);
 -(void)setCameraFlashMode:(id)args
 {
 	// Return nothing	
-	ENSURE_UI_THREAD(setCameraFlashMode,args);
 	ENSURE_SINGLE_ARG(args,NSNumber);
+	ENSURE_UI_THREAD(setCameraFlashMode,args);
 	
 	if (picker!=nil)
 	{
@@ -674,9 +749,8 @@ MAKE_SYSTEM_PROP(VIDEO_FINISH_REASON_USER_EXITED,MPMovieFinishReasonUserExited);
 
 -(void)switchCamera:(id)args
 {
-	// Return nothing	
-	ENSURE_UI_THREAD(switchCamera,args);
 	ENSURE_SINGLE_ARG(args,NSNumber);
+	ENSURE_UI_THREAD(switchCamera,args);
 	
 	// must have a picker, doh
 	if (picker==nil)
@@ -710,8 +784,8 @@ MAKE_SYSTEM_PROP(VIDEO_FINISH_REASON_USER_EXITED,MPMovieFinishReasonUserExited);
 
 -(void)startVideoEditing:(id)args
 {	
-	ENSURE_UI_THREAD(startVideoEditing,args);
 	ENSURE_SINGLE_ARG_OR_NIL(args,NSDictionary);
+	ENSURE_UI_THREAD(startVideoEditing,args);
 
 	RELEASE_TO_NIL(editor); 
 	
@@ -767,8 +841,8 @@ MAKE_SYSTEM_PROP(VIDEO_FINISH_REASON_USER_EXITED,MPMovieFinishReasonUserExited);
 
 -(void)stopVideoEditing:(id)args
 {	
-	ENSURE_UI_THREAD(stopVideoEditing,args);
 	ENSURE_SINGLE_ARG_OR_NIL(args,NSDictionary);
+	ENSURE_UI_THREAD(stopVideoEditing,args);
 	
 	if (editor!=nil)
 	{
@@ -819,22 +893,22 @@ MAKE_SYSTEM_PROP(VIDEO_FINISH_REASON_USER_EXITED,MPMovieFinishReasonUserExited);
 
 -(void)showCamera:(id)args
 {
-	ENSURE_UI_THREAD(showCamera,args);
 	ENSURE_SINGLE_ARG_OR_NIL(args,NSDictionary);
+	ENSURE_UI_THREAD(showCamera,args);
 	[self showPicker:args isCamera:YES];
 }
 
 -(void)openPhotoGallery:(id)args
 {
-	ENSURE_UI_THREAD(openPhotoGallery,args);
 	ENSURE_SINGLE_ARG_OR_NIL(args,NSDictionary);
+	ENSURE_UI_THREAD(openPhotoGallery,args);
 	[self showPicker:args isCamera:NO];
 }	
 
 -(void)takeScreenshot:(id)arg
 {
-	ENSURE_UI_THREAD(takeScreenshot,arg);
 	ENSURE_SINGLE_ARG(arg,KrollCallback);
+	ENSURE_UI_THREAD(takeScreenshot,arg);
 
     // Create a graphics context with the target size
 
@@ -1017,7 +1091,24 @@ MAKE_SYSTEM_PROP(VIDEO_FINISH_REASON_USER_EXITED,MPMovieFinishReasonUserExited);
 	ENSURE_UI_THREAD(hideCamera,args);
 	if (picker!=nil)
 	{
-		[[TiApp app] hideModalController:picker animated:animatedPicker];
+        if (cameraView != nil) {
+            [cameraView windowWillClose];
+        }
+		if (popover != nil) {
+			[popover dismissPopoverAnimated:animatedPicker];
+			RELEASE_TO_NIL(popover);
+
+			//Unregister for interface change notification 
+			[[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationWillChangeStatusBarOrientationNotification object:nil];
+			[[NSNotificationCenter defaultCenter] removeObserver:self name:UIDeviceOrientationDidChangeNotification object:nil];
+		}
+		else {
+			[[TiApp app] hideModalController:picker animated:animatedPicker];
+		}
+        if (cameraView != nil) {
+            [cameraView windowDidClose];
+            RELEASE_TO_NIL(cameraView);
+        }
 		[self destroyPicker];
 	}
 }
@@ -1025,8 +1116,8 @@ MAKE_SYSTEM_PROP(VIDEO_FINISH_REASON_USER_EXITED,MPMovieFinishReasonUserExited);
 
 -(void)openMusicLibrary:(id)args
 {	
-	ENSURE_UI_THREAD(openMusicLibrary,args);
 	ENSURE_SINGLE_ARG_OR_NIL(args,NSDictionary);
+	ENSURE_UI_THREAD(openMusicLibrary,args);
 
 	if (musicPicker != nil) {
 		[self sendPickerError:MediaModuleErrorBusy];
@@ -1138,8 +1229,9 @@ MAKE_SYSTEM_PROP(VIDEO_FINISH_REASON_USER_EXITED,MPMovieFinishReasonUserExited);
 {
 	if (systemMusicPlayer == nil) {
 		if (![NSThread isMainThread]) {
-			[self performSelectorOnMainThread:@selector(systemMusicPlayer) withObject:nil waitUntilDone:YES];
-			return systemMusicPlayer;
+			__block id result;
+			TiThreadPerformOnMainThread(^{result = [self systemMusicPlayer];}, YES);
+			return result;
 		}
 		systemMusicPlayer = [[TiMediaMusicPlayer alloc] _initWithPageContext:[self pageContext] player:[MPMusicPlayerController iPodMusicPlayer]];
 	}
@@ -1150,7 +1242,8 @@ MAKE_SYSTEM_PROP(VIDEO_FINISH_REASON_USER_EXITED,MPMovieFinishReasonUserExited);
 {
 	if (appMusicPlayer == nil) {
 		if (![NSThread isMainThread]) {
-			[self performSelectorOnMainThread:@selector(appMusicPlayer) withObject:nil waitUntilDone:YES];
+			__block id result;
+			TiThreadPerformOnMainThread(^{result = [self appMusicPlayer];}, YES);
 			return appMusicPlayer;
 		}
 		appMusicPlayer = [[TiMediaMusicPlayer alloc] _initWithPageContext:[self pageContext] player:[MPMusicPlayerController applicationMusicPlayer]];
@@ -1233,12 +1326,40 @@ MAKE_SYSTEM_PROP(VIDEO_FINISH_REASON_USER_EXITED,MPMovieFinishReasonUserExited);
 		}
 		else
 		{
-			UIImage *image = (editedImage != nil)?editedImage:
-					[editingInfo objectForKey:UIImagePickerControllerOriginalImage];
-			media = [[[TiBlob alloc] initWithImage:image] autorelease];
+            UIImage *resultImage = nil;
+            UIImage *originalImage = [editingInfo objectForKey:UIImagePickerControllerOriginalImage];
+            if ( (editedImage != nil) && (ourRectValue != nil) && (originalImage != nil)) {
+                
+                CGRect ourRect = [ourRectValue CGRectValue];
+                
+                if ( (ourRect.size.width > editedImage.size.width) || (ourRect.size.height > editedImage.size.height) ){
+                    UIGraphicsBeginImageContext(ourRect.size);
+                    CGContextRef context = UIGraphicsGetCurrentContext();
+                    
+                    // translated rectangle for drawing sub image 
+                    CGRect drawRect = CGRectMake(-ourRect.origin.x, -ourRect.origin.y, originalImage.size.width, originalImage.size.height);
+                    
+                    // clip to the bounds of the image context
+                    CGContextClipToRect(context, CGRectMake(0, 0, ourRect.size.width, ourRect.size.height));
+                    
+                    // draw image
+                    [originalImage drawInRect:drawRect];
+                    
+                    // grab image
+                    resultImage = UIGraphicsGetImageFromCurrentImageContext();
+                    
+                    UIGraphicsEndImageContext();
+                }
+            }
+            
+            if (resultImage == nil) {
+                resultImage = (editedImage != nil) ? editedImage : originalImage;
+            }
+            
+			media = [[[TiBlob alloc] initWithImage:resultImage] autorelease];
 			if (saveToRoll)
 			{
-				UIImageWriteToSavedPhotosAlbum(image, nil, nil, NULL);
+				UIImageWriteToSavedPhotosAlbum(resultImage, nil, nil, NULL);
 			}
 		}
 	}

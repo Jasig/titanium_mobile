@@ -1,6 +1,6 @@
 /**
  * Appcelerator Titanium Mobile
- * Copyright (c) 2009-2011 by Appcelerator, Inc. All Rights Reserved.
+ * Copyright (c) 2009-2012 by Appcelerator, Inc. All Rights Reserved.
  * Licensed under the terms of the Apache Public License
  * Please see the LICENSE included with this distribution for details.
  */
@@ -55,6 +55,17 @@ public class TableViewRowProxy extends TiViewProxy
 	}
 
 	@Override
+	public void setActivity(Activity activity)
+	{
+		super.setActivity(activity);
+		if (controls != null) {
+			for (TiViewProxy control : controls) {
+				control.setActivity(activity);
+			}
+		}
+	}
+
+	@Override
 	public void handleCreationDict(KrollDict options)
 	{
 		super.handleCreationDict(options);
@@ -81,9 +92,9 @@ public class TableViewRowProxy extends TiViewProxy
 		return (controls != null && controls.size() > 0);
 	}
 	
-	@Override
+	@Override 
 	public TiViewProxy[] getChildren() {
-		if (children == null) {
+		if (controls == null) {
 			return new TiViewProxy[0];
 		}
 		return controls.toArray(new TiViewProxy[controls.size()]);
@@ -160,14 +171,18 @@ public class TableViewRowProxy extends TiViewProxy
 		data.put(TiC.EVENT_PROPERTY_DETAIL, false);
 	}
 
-	 
+	@Override
 	public boolean fireEvent(String eventName, Object data) {
 		if (eventName.equals(TiC.EVENT_CLICK) || eventName.equals(TiC.EVENT_LONGCLICK)) {
-			// inject row click data for events coming from row children
+			// Inject row click data for events coming from row children.
 			TableViewProxy table = getTable();
 			Item item = tableViewItem.getRowData();
 			if (table != null && item != null && data instanceof KrollDict) {
-				fillClickEvent((KrollDict) data, table.getTableView().getModel(), item);
+				// The data object may already be in use by the runtime thread
+				// due to a child view's event fire. Create a copy to be thread safe.
+				KrollDict dataCopy = new KrollDict((KrollDict)data);
+				fillClickEvent(dataCopy, table.getTableView().getModel(), item);
+				data = dataCopy;
 			}
 		}
 		return super.fireEvent(eventName, data);

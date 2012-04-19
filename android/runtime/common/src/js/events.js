@@ -236,14 +236,16 @@ Object.defineProperty(EventEmitter.prototype, "removeListener", {
 					return this;
 				}
 			} else {
-				for (var i = 0, length = list.length; i < length; i++) {
-					if (list.listener[i] === listener ||
-						(list.listener[i].listener && list.listener[i].listener === listener))
-					{
-						position = i;
-						break;
-					}
-				}
+			    if (list.listener) {
+    				for (var i = 0, length = list.length; i < length; i++) {
+    					if (list.listener[i] === listener ||
+    						(list.listener[i].listener && list.listener[i].listener === listener))
+    					{
+    						position = i;
+    						break;
+    					}
+    				}
+    			}
 			}
 
 			if (position < 0) return this;
